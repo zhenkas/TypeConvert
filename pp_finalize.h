@@ -33,26 +33,34 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //Use FINALIZE() to force the execution on scope exit
 //Use FINALIZE(finalizeName) to force the execution on scope exit with ability to cancel it by CANCEL_FINALIZE(finalizeName)
 #define FINALIZE(...)						PP_CAT (FINALIZE_, PP_NUM_ARGS(__VA_ARGS__) (##__VA_ARGS__))
-#define CANCEL_FINALIZE(finalizerName)		finalizer_state_ ## finalizerName = EFinalizerState::FINALIZER_STATE_CANCEL
 
-#define FINALIZE_0()						auto PP_CAT(finalizer_ , __LINE__) = ScopeFinalizerCreator() = [&]()
-#define FINALIZE_1(finalizerName)			EFinalizerState PP_CAT(finalizer_state_ , finalizerName) = EFinalizerState::FINALIZER_STATE_READY; auto PP_CAT(finalizer_ , finalizerName) = ScopeFinalizerWithCancelCreator(PP_CAT(finalizer_state_ , finalizerName)) = [&]()
+#define FINALIZE_0()						ScopeFinalizerCreator PP_CAT(finalizer_ , __LINE__) = [&]()
+#define FINALIZE_1(finalizerName)			ScopeFinalizerWithCancelCreator PP_CAT(finalizer_ , finalizerName) = [&]()
+#define CANCEL_FINALIZE(finalizerName)		\
+	static_assert(std::is_same<EFinalizerState, decltype(PP_CAT(finalizer_ , finalizerName).m_state)>::value, "The finalizer is not declared in this scope");\
+	PP_CAT(finalizer_ , finalizerName).m_state = EFinalizerState::FINALIZER_STATE_CANCEL
 
 template<typename TLambda>
-struct ScopeFinalizer
+void CallFinalizeStatic(void * lambda)
 {
-	inline ScopeFinalizer(TLambda & lambda) : m_lambda(lambda){}
-	inline ScopeFinalizer(ScopeFinalizer<TLambda> & fin) : m_lambda(fin.m_lambda) {}
-    inline ~ScopeFinalizer()    { m_lambda(); }
-    TLambda & m_lambda;
-};
+	(*reinterpret_cast<TLambda *>(lambda))();
+}
+
+typedef void (*TCallFinalizeStatic)(void * lambda);
 
 struct ScopeFinalizerCreator
 {
 	template<typename TLambda>
-	inline ScopeFinalizer<TLambda> operator = (TLambda & lambda) {
-		return ScopeFinalizer<TLambda>(lambda);
+	inline ScopeFinalizerCreator(TLambda && lambda) 
+		: m_callLambda(CallFinalizeStatic<TLambda>)
+		, m_lambda(reinterpret_cast<void *>(&lambda)) 
+	{}
+	inline ~ScopeFinalizerCreator()
+	{
+		m_callLambda(m_lambda);
 	}
+	TCallFinalizeStatic m_callLambda;
+	void * m_lambda;
 };
 
 enum EFinalizerState: unsigned char {
@@ -61,29 +69,21 @@ enum EFinalizerState: unsigned char {
 	FINALIZER_STATE_FINALIZED,
 };
 
-template<typename TLambda>
-struct ScopeFinalizerWithCancel
-{
-	inline ScopeFinalizerWithCancel(TLambda & lambda, EFinalizerState & state) : m_lambda(lambda), m_state(state) {}
-	inline ScopeFinalizerWithCancel(ScopeFinalizerWithCancel<TLambda> & fin) : m_lambda(fin.m_lambda), m_state(fin.m_state) {}
-	inline ~ScopeFinalizerWithCancel()    { 
-		if (m_state == EFinalizerState::FINALIZER_STATE_READY) {
-			m_lambda();
-			m_state = EFinalizerState::FINALIZER_STATE_FINALIZED;
-		}
-	}
-	TLambda & m_lambda;
-	EFinalizerState & m_state;
-};
-
-
 struct ScopeFinalizerWithCancelCreator
 {
-	ScopeFinalizerWithCancelCreator(EFinalizerState && _state): m_state(_state) {}
-    template<typename TLambda>
-    inline ScopeFinalizerWithCancel<TLambda> operator = (TLambda & lambda) {
-        return ScopeFinalizerWithCancel<TLambda>(lambda, m_state);
-    }
-	EFinalizerState & m_state;
+	template<typename TLambda>
+	inline ScopeFinalizerWithCancelCreator(TLambda && lambda) 
+		: m_state(EFinalizerState::FINALIZER_STATE_READY)
+		, m_callLambda(CallFinalizeStatic<TLambda>)
+		, m_lambda(reinterpret_cast<void *>(&lambda))
+	{}
+	inline ~ScopeFinalizerWithCancelCreator()
+	{
+		if (m_state == EFinalizerState::FINALIZER_STATE_READY)
+			m_callLambda(m_lambda);
+	}
+	TCallFinalizeStatic m_callLambda;
+	void * m_lambda;
+	EFinalizerState m_state;
 };
 
