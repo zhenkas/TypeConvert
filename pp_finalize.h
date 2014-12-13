@@ -46,8 +46,6 @@ void CallFinalizeStatic(void * lambda)
 	(*reinterpret_cast<TLambda *>(lambda))();
 }
 
-typedef void (*TCallFinalizeStatic)(void * lambda);
-
 struct ScopeFinalizerCreator
 {
 	template<typename TLambda>
@@ -59,11 +57,12 @@ struct ScopeFinalizerCreator
 	{
 		m_callLambda(m_lambda);
 	}
-	TCallFinalizeStatic m_callLambda;
+	void(*m_callLambda)(void * lambda);
 	void * m_lambda;
 };
 
-enum EFinalizerState: unsigned char {
+enum EFinalizerState : size_t
+{
 	FINALIZER_STATE_READY,
 	FINALIZER_STATE_CANCEL,
 	FINALIZER_STATE_FINALIZED,
@@ -82,7 +81,7 @@ struct ScopeFinalizerWithCancelCreator
 		if (m_state == EFinalizerState::FINALIZER_STATE_READY)
 			m_callLambda(m_lambda);
 	}
-	TCallFinalizeStatic m_callLambda;
+	void (*m_callLambda)(void * lambda);
 	void * m_lambda;
 	EFinalizerState m_state;
 };
